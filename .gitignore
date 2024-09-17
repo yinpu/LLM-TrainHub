@@ -1,5 +1,6 @@
 lora_model/
 outputs/
+cache*/
 Qwen
 
 __pycache__/
