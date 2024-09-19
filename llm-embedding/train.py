@@ -1,4 +1,5 @@
 import logging
+import torch
 from transformers import HfArgumentParser
 
 from llm_embedding.arguments import TrainArguments, ModelDataarguments
@@ -58,6 +59,11 @@ def main():
     )
     trainer.train()
 
+    # test
+    model.eval()
+    with torch.no_grad():
+        embedding = model(["hello world!"])
+    logger.info(embedding)
 
 if __name__ == "__main__":
     main()

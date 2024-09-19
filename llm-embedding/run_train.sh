@@ -17,5 +17,5 @@ torchrun --nnodes 1 \
     --temperature 0.05 \
     --logging_steps 5 \
     --remove_unused_columns False \
-    --use_adapter False \
+    --use_adapter True \
     --deepspeed ds_z2_config.json
