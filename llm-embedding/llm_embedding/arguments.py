@@ -27,3 +27,4 @@ class ModelDataarguments:
     model_name_or_path: str
     data_dir: str
     cache_dir_data: str
+    use_adapter: bool = False

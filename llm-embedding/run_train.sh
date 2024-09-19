@@ -2,7 +2,7 @@ torchrun --nnodes 1 \
     --nproc-per-node 1 \
     train.py \
     --output_dir saved/Qwen2-1.5B-Emb \
-    --model_name_or_path /home/yinpu/Projects/llm-tutorial/llm-lora-simple/Qwen/Qwen2-1.5B-Instruct \
+    --model_name_or_path ./Qwen/Qwen2.5-0.5B \
     --data_dir data \
     --cache_dir_data cache_data \
     --learning_rate 2e-5 \
@@ -17,4 +17,5 @@ torchrun --nnodes 1 \
     --temperature 0.05 \
     --logging_steps 5 \
     --remove_unused_columns False \
+    --use_adapter False \
     --deepspeed ds_z2_config.json

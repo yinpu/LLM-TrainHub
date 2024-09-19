@@ -42,6 +42,4 @@ class EmbeddingTrainer(Trainer):
     def _save(self, output_dir: Optional[str] = None, state_dict=None):
         output_dir = output_dir if output_dir is not None else self.args.output_dir
         os.makedirs(output_dir, exist_ok=True)
-
-        self.model.model.save_pretrained(output_dir)
-        self.model.tokenizer.save_pretrained(output_dir)
+        self.model.save(output_dir)
