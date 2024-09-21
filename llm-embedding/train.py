@@ -58,11 +58,12 @@ def main():
         train_dataset=dataset,
     )
     trainer.train()
-
+    trainer.save_state()
+    trainer.save_model(output_dir=training_args.output_dir)
     # test
     model.eval()
     with torch.no_grad():
-        embedding = model(["hello world!"])
+        embedding = model(["hello"])
     logger.info(embedding)
 
 if __name__ == "__main__":

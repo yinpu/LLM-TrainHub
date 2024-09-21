@@ -60,7 +60,7 @@ def main():
             model_name_or_path=args.model_path,
             device=device
         )
-    elif args.model_type == "adapter":
+    elif args.model_type == "EmbeddingModel4Qwen2Adapter":
         if args.adapter_weights_path is None:
             raise ValueError("Adapter weights path must be provided when using the adapter model.")
         model = EmbeddingModel4Qwen2Adapter(
