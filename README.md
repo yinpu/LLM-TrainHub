@@ -23,7 +23,7 @@ This repository provides a customizable framework for training and inference of 
 
 - ✅ **llm-embedding**: A project to generate embeddings using LLMs.
   - ✅ Fine-tune LLM parameters to generate embeddings.
-  - ✅ Freeze LLM parameters and add a fully connected adaptor layer to generate embeddings.
+  - ✅ Freeze LLM parameters and add a fully connected Adapter layer to generate embeddings.
 
 - ⏳ **LLM Full-Parameter SFT**: Full parameter supervised fine-tuning of large language models.
 
