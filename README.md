@@ -16,10 +16,24 @@ This repository provides a customizable framework for training and inference of 
 - **Efficient Training**: Supports state-of-the-art techniques for LLM training, including LoRA fine-tuning and embedding generation.
 - **Flexible Model Handling**: Provides utilities for custom model saving and loading workflows.
 
-## Current Projects
+## Project Plans
 
 - [x] **llm-lora-simple**: A simplified single-machine LoRA fine-tuning setup for large language models.
-- [x] **llm-embedding**: A project to generate embeddings using LLMs, with support for training on custom datasets.
+  - [ ] Migration to DDP, with further adjustments planned.
+
+- [x] **llm-embedding**: A project to generate embeddings using LLMs.
+  - [x] Fine-tune LLM parameters to generate embeddings.
+  - [x] Freeze LLM parameters and add a fully connected adaptor layer to generate embeddings.
+
+- [ ] **LLM Full-Parameter SFT**: Full parameter supervised fine-tuning of large language models.
+
+- [ ] **LLM-LoRA Fine-Tuning**: Fine-tuning large language models using LoRA, with plans for scalability improvements.
+
+- [ ] **LLM-DPO Training**: Training LLMs using direct preference optimization techniques.
+
+- [ ] **Notellm Replication**: Reproducing the Notellm model and its associated tasks.
+
+- [ ] **VLM Fine-Tuning**: Fine-tuning vision-language models for specific tasks.
 
 
 目标：
