@@ -20,8 +20,8 @@ class EmbeddingModel4Qwen2(nn.Module):
             model_name_or_path,
             trust_remote_code=True,
         )
-        # if self.device == "cuda":
-        #     self.model.to("cuda")
+        if self.device == "cuda":
+            self.model.to("cuda")
 
     def forward(
         self,

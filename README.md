@@ -25,9 +25,9 @@ This repository provides a customizable framework for training and inference of 
   - ✅ Fine-tune LLM parameters to generate embeddings.
   - ✅ Freeze LLM parameters and add a fully connected Adapter layer to generate embeddings.
 
-- ⏳ **LLM Full-Parameter SFT**: Full parameter supervised fine-tuning of large language models.
+- 🔄 **LLM Full-Parameter SFT**: Full parameter supervised fine-tuning of large language models.
 
-- ⏳ **LLM-LoRA Fine-Tuning**: Fine-tuning large language models using LoRA, with plans for scalability improvements.
+- 🔄 **LLM-LoRA Fine-Tuning**: Fine-tuning large language models using LoRA, with plans for scalability improvements.
 
 - ⏳ **LLM-DPO Training**: Training LLMs using direct preference optimization techniques.
 
