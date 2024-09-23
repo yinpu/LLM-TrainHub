@@ -1,6 +1,6 @@
-# LLM Training and Inference Framework
+# LLM-TrainHub
 
-This repository provides a customizable framework for training and inference of large language models (LLM). It is designed for flexibility, ease of modification, and maintaining a consistent style across projects. The core objective is to enable users to easily adapt the code for their own needs, particularly around custom data loading, model architecture adjustments, and custom loss functions, while supporting common LLM training setups.
+LLM-TrainHub is a centralized collection of independent projects designed to facilitate the training of large language models (LLMs) using various techniques such as SFT , DPO.  It is designed for flexibility, ease of modification, and maintaining a consistent style across projects. The core objective is to enable users to easily adapt the code for their own needs, particularly around custom data loading, model architecture adjustments, and custom loss functions, while supporting common LLM training setups.
 
 ## Features
 
