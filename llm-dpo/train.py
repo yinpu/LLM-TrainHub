@@ -1,91 +1,80 @@
-import torch
-from datasets import load_dataset
-from transformers import Trainer, TrainingArguments, DataCollatorForLanguageModeling
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from peft import get_peft_config, get_peft_model, LoraConfig, TaskType
+import logging
+import sys
+import transformers
+from transformers import TrainingArguments, AutoTokenizer
+from transformers import HfArgumentParser, set_seed
+from transformers.utils.logging import (enable_default_handler, enable_explicit_format, set_verbosity)
+from llm_dpo.model import get_model
+from llm_dpo.data import get_dataset, PairwiseDataCollatorWithPadding
+from llm_dpo.arguments import ModelArguments, DataArguments, FinetuningArguments
+from llm_dpo.trainer import CustomDPOTrainer
 
-from torch.utils.data import Dataset
+logger = logging.getLogger(__name__)
 
-tokenizer = AutoTokenizer.from_pretrained("/home/yinpu/Projects/llm-tutorial/llm-embedding/Qwen/Qwen2.5-0.5B", trust_remote_code=True)
+def main():
+    parser = HfArgumentParser((ModelArguments, DataArguments, TrainingArguments, FinetuningArguments))
+    model_args, data_args, training_args, finetuning_args = parser.parse_args_into_dataclasses()
 
-model = AutoModelForCausalLM.from_pretrained("/home/yinpu/Projects/llm-tutorial/llm-embedding/Qwen/Qwen2.5-0.5B", device_map="auto", trust_remote_code=True)
+    # Setup logging
+    logging.basicConfig(
+        format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
+        datefmt='%m/%d/%Y %H:%M:%S',
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
+    if training_args.should_log:
+        # The default of training_args.log_level is passive, so we set log level at info here to have that default.
+        transformers.utils.logging.set_verbosity_info()
+    log_level = training_args.get_process_log_level()
+    logger.setLevel(log_level)
+    set_verbosity(log_level)
+    enable_default_handler()
+    enable_explicit_format()
 
-peft_config = LoraConfig(
-    task_type=TaskType.CAUSAL_LM, inference_mode=False, r=8, lora_alpha=32, lora_dropout=0.1
-)
+    # Log on each process the small summary:
+    logger.warning(
+        f'Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu}'
+        + f'distributed training: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}'
+    )
+    logger.info(f'Training/evaluation parameters {training_args}')
+    logger.info(f'Finetuning arguments: {finetuning_args}')
+    logger.info(f'Model args: {model_args}')
+    logger.info(f'Data args: {data_args}')
 
-model = get_peft_model(model, peft_config)
+    set_seed(training_args.seed)
 
-model_ref = AutoModelForCausalLM.from_pretrained("/home/yinpu/Projects/llm-tutorial/llm-embedding/Qwen/Qwen2.5-0.5B", device_map="auto", trust_remote_code=True)
+    # 加载模型
+    policy_model = get_model(model_args, is_ref_model=False)
+    ref_model = get_model(model_args, is_ref_model=True)
+    logger.info("POLICY MODEL PARAM:")
+    for name, param in policy_model.named_parameters():
+        logger.info(f"{name}\t{param.requires_grad}")
 
+    if ref_model:
+        logger.info("REF MODEL PARAM:")
+        for name, param in policy_model.named_parameters():
+            logger.info(f"{name}\t{param.requires_grad}")
 
+    # 加载数据集
+    tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path)
+    dataset = get_dataset(data_args, training_args, tokenizer)
+    data_collator = PairwiseDataCollatorWithPadding(tokenizer=tokenizer)
 
-class dpo_dataset(Dataset):
-    def __init__(self,file,tokenizer,max_seq_length):
-        self.tokenizer = tokenizer
-        self.max_seq_length = max_seq_length
-        # 打开json文件 用transformers
-        self.data_list = load_dataset("json",data_files=file)['train']
-    def __len__(self):
-        return len(self.data_list)
-    def __getitem__(self,index):
-        # 取出data_list的一条数据  --> {"chosen":xxx,"rejected":xxx,"prompt":xxx} 一条数据是这样的格式
-        data = self.data_list[index]
+    # 训练
+    training_args.remove_unused_columns = False
+    trainer = CustomDPOTrainer(
+        model=policy_model,
+        ref_model=ref_model,
+        args=training_args,
+        data_collator=data_collator,
+        train_dataset=dataset,
+        finetuning_args=finetuning_args,
+    )
 
-        # 对prompt reject和chosen进行tokenize  判断是否需要截断 保证所有的input_ids都一样 不够长度的直接padding  
-        # 适配qwen 的 template  添加eos token
-        prompt_input_ids = self.tokenizer.encode('<|im_start|>' + data['prompt'] + '<|im_end|>',add_special_tokens=False)
-        chosen_input_ids = self.tokenizer.encode(data['chosen'],add_special_tokens=False)
-        rejected_input_ids = self.tokenizer.encode(data['rejected'],add_special_tokens=False)
+    train_result = trainer.train()
+    trainer.save_model()
+    trainer.log_metrics("train", train_result.metrics)
+    trainer.save_metrics("train", train_result.metrics)
+    trainer.save_state()
 
-        prompt_input_ids = prompt_input_ids + [self.tokenizer.pad_token_id]
-        # 设置labels
-        chosen_labels = [-100] * len(prompt_input_ids) + chosen_input_ids + [self.tokenizer.pad_token_id]
-        rejected_labels = [-100] * len(prompt_input_ids) + rejected_input_ids + [self.tokenizer.pad_token_id]
-        chosen_input_ids = prompt_input_ids + chosen_input_ids + [self.tokenizer.pad_token_id]
-        rejected_input_ids = prompt_input_ids + rejected_input_ids + [self.tokenizer.pad_token_id]
-
-        assert len(chosen_labels) == len(chosen_input_ids)
-        assert len(rejected_labels) == len(rejected_input_ids)
-
-        inputs = dict(
-            prompt_input_ids=prompt_input_ids,
-            prompt_attention_mask=[1]*len(prompt_input_ids),
-            chosen_input_ids=chosen_input_ids,
-            chosen_attention_mask=[1]*len(chosen_input_ids),
-            chosen_labels=chosen_labels,
-            rejected_input_ids=rejected_input_ids,
-            rejected_attention_mask=[1]*len(rejected_input_ids),
-            rejected_labels=rejected_labels,
-        )
-        return inputs
-    def map(self, func, **kwargs):
-        return self
-    
-
-
-train_dataset = dpo_dataset(file = 'data.json', tokenizer = tokenizer, max_seq_length = 50)
-from trl import DPOTrainer, DPOConfig
-
-training_args = DPOConfig(
-        num_train_epochs = 1,
-        per_device_train_batch_size=2,
-        learning_rate=3e-4,
-        output_dir="./",
-        save_total_limit = 1,
-        logging_strategy = "steps",
-        logging_steps = 50,
-        seed = 103,
-        fp16 = True,
-        warmup_steps = 100,
-)
-
-dpo_trainer = DPOTrainer(
-        model,
-        model_ref,
-        beta=0.1, # DPO 的温度超参
-        train_dataset=train_dataset, # 上文准备好的数据集
-        tokenizer=tokenizer, # 分词器
-        args=training_args)
-
-dpo_trainer.train()
+if __name__ == "__main__":
+    main()
