@@ -10,25 +10,11 @@ from transformers import Trainer
 from trl import DPOTrainer
 from trl.trainer import disable_dropout_in_model
 from typing_extensions import override
-from packaging import version
 from typing import TYPE_CHECKING
-import importlib.metadata
-import importlib.util
 from .arguments import FinetuningArguments
 
 IGNORE_INDEX = -100
 
-if TYPE_CHECKING:
-    from packaging.version import Version
-
-def _get_package_version(name: str) -> "Version":
-    try:
-        return version.parse(importlib.metadata.version(name))
-    except Exception:
-        return version.parse("0.0.0")
-
-def is_transformers_version_equal_to_4_46():
-    return version.parse("4.46.0") <= _get_package_version("transformers") <= version.parse("4.46.1")
 
 if TYPE_CHECKING:
     from transformers import PreTrainedModel, ProcessorMixin
@@ -81,7 +67,7 @@ class CustomDPOTrainer(DPOTrainer):
         self.label_smoothing = finetuning_args.label_smoothing
 
         self.dpo_type = finetuning_args.dpo_type
-        self.simplo_gamma = finetuning_args.simplo_gamma
+        self.simpo_gamma = finetuning_args.simpo_gamma
         print(f"DPO_TYPE: {self.dpo_type}")
 
         Trainer.__init__(self, model=model, **kwargs)
@@ -112,15 +98,15 @@ class CustomDPOTrainer(DPOTrainer):
                 model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
                 print("enable_input_embeddings_require_grads")
 
-    def simplo_loss(self, chosen_logps: "torch.Tensor", rejected_logps: "torch.Tensor") -> "torch.Tensor":
+    def simpo_loss(self, chosen_logps: "torch.Tensor", rejected_logps: "torch.Tensor") -> "torch.Tensor":
         """
-        Computes SimPLO loss for batched log probabilities of the policy model.
+        Computes simpo loss for batched log probabilities of the policy model.
         """
         pi_logratios = chosen_logps - rejected_logps
-        gamma_logratios = self.simplo_gamma / self.beta
+        gamma_logratios = self.simpo_gamma / self.beta
         logits = pi_logratios - gamma_logratios
-        simplo_loss = -F.logsigmoid(self.beta * logits)
-        return simplo_loss
+        simpo_loss = -F.logsigmoid(self.beta * logits)
+        return simpo_loss
 
     def compute_preference_loss(
         self,
@@ -132,3 +118,157 @@ class CustomDPOTrainer(DPOTrainer):
         """
         Computes loss for preference learning.
         """
+        if self.dpo_type == "dpo":
+            losses, chosen_rewards, rejected_rewards = self.dpo_loss(policy_chosen_logps, policy_rejected_logps, reference_chosen_logps, reference_rejected_logps)
+        elif self.dpo_type == "simpo":
+            losses = self.simpo_loss(policy_chosen_logps, policy_rejected_logps)
+            chosen_rewards = self.beta * policy_chosen_logps.to(self.accelerator.device).detach()
+            rejected_rewards = self.beta * policy_rejected_logps.to(self.accelerator.device).detach()
+        else:
+            raise ValueError(f"Invalid DPO type: {self.dpo_type}")
+        return losses, chosen_rewards, rejected_rewards
+    
+    @override
+    def concatenated_forward(
+        self, model: "PreTrainedModel", batch: Dict[str, "torch.Tensor"]
+    ) -> Tuple["torch.Tensor", "torch.Tensor", "torch.Tensor", "torch.Tensor", "torch.Tensor"]:
+        r"""
+        Computes the sum log probabilities of the labels under given logits if loss_type is not IPO, ORPO or SimPO.
+
+        Otherwise the average log probabilities.
+        """
+        if self.dpo_type in ["dpo"]: # need reference model
+            batch = {k: v.detach().clone() for k, v in batch.items()}
+
+        all_logits: "torch.Tensor" = model(**batch, return_dict=True, use_cache=False).logits.to(torch.float32)
+        all_logps, valid_length = get_batch_logps(logits=all_logits, labels=batch["labels"])
+        if self.dpo_type in ["simpo"]:
+            all_logps = all_logps / valid_length
+
+        batch_size = batch["input_ids"].size(0) // 2
+        chosen_logps, rejected_logps = all_logps.split(batch_size, dim=0)
+        chosen_logits, rejected_logits = all_logits.split(batch_size, dim=0)
+        chosen_length, _ = valid_length.split(batch_size, dim=0)
+
+        if self.dpo_type in ["simpo"]:
+            return chosen_logps, rejected_logps, chosen_logits, rejected_logits, chosen_logps
+        else:
+            return chosen_logps, rejected_logps, chosen_logits, rejected_logits, chosen_logps / chosen_length
+    
+    @override
+    def compute_reference_log_probs(
+        self, model: "PreTrainedModel", batch: Dict[str, "torch.Tensor"]
+    ) -> Tuple[Optional["torch.Tensor"], Optional["torch.Tensor"]]:
+        r"""
+        Computes log probabilities of the reference model.
+        """
+        if self.ref_model is None:
+            ref_model = model
+            ref_context = self.accelerator.unwrap_model(model).disable_adapter()
+        else:
+            ref_model = self.ref_model
+            ref_context = nullcontext()
+
+        with torch.no_grad(), ref_context:
+            reference_chosen_logps, reference_rejected_logps, *_ = self.concatenated_forward(ref_model, batch)
+
+        return reference_chosen_logps, reference_rejected_logps
+    
+    @override
+    def get_batch_loss_metrics(
+        self,
+        model: "PreTrainedModel",
+        batch: Dict[str, "torch.Tensor"],
+        train_eval: Literal["train", "eval"] = "train",
+    ) -> Tuple["torch.Tensor", Dict[str, "torch.Tensor"]]:
+        r"""
+        Computes the DPO loss and other metrics for the given batch of inputs for train or test.
+        """
+        metrics = {}
+        (
+            policy_chosen_logps,
+            policy_rejected_logps,
+            policy_chosen_logits,
+            policy_rejected_logits,
+            policy_chosen_logps_avg,
+        ) = self.concatenated_forward(model, batch)
+
+        if self.dpo_type in ["simpo"]:
+            reference_chosen_logps, reference_rejected_logps = None, None
+        else:
+            reference_chosen_logps, reference_rejected_logps = self.compute_reference_log_probs(model, batch)
+        losses, chosen_rewards, rejected_rewards = self.compute_preference_loss(
+            policy_chosen_logps,
+            policy_rejected_logps,
+            reference_chosen_logps,
+            reference_rejected_logps,
+        )
+        sft_loss = -policy_chosen_logps_avg
+        if self.ftx_gamma > 1e-6:
+            losses += self.ftx_gamma * sft_loss
+
+        prefix = "eval_" if train_eval == "eval" else ""
+        metrics[f"{prefix}rewards/chosen"] = chosen_rewards.mean().item()
+        metrics[f"{prefix}rewards/rejected"] = rejected_rewards.mean().item()
+        metrics[f"{prefix}rewards/accuracies"] = (chosen_rewards > rejected_rewards).float().mean().item()
+        metrics[f"{prefix}rewards/margins"] = (chosen_rewards - rejected_rewards).mean().item()
+        metrics[f"{prefix}logps/chosen"] = policy_chosen_logps.mean().item()
+        metrics[f"{prefix}logps/rejected"] = policy_rejected_logps.mean().item()
+        metrics[f"{prefix}logits/chosen"] = policy_chosen_logits.mean().item()
+        metrics[f"{prefix}logits/rejected"] = policy_rejected_logits.mean().item()
+        if self.loss_type == "orpo":
+            metrics[f"{prefix}sft_loss"] = sft_loss.mean().item()
+            metrics[f"{prefix}odds_ratio_loss"] = ((losses - sft_loss) / self.beta).mean().item()
+
+        return losses.mean(), metrics
+
+    @override
+    def compute_loss(
+        self, model: "PreTrainedModel", inputs: Dict[str, "torch.Tensor"], return_outputs: bool = False, **kwargs
+    ) -> Union["torch.Tensor", Tuple["torch.Tensor", List["torch.Tensor"]]]:
+        r"""
+        Subclass and override to accept extra kwargs.
+        """
+        return super().compute_loss(model, inputs, return_outputs)
+
+    @override
+    def log(self, logs: Dict[str, float], *args, **kwargs) -> None:
+        r"""
+        Log `logs` on the various objects watching training, including stored metrics.
+        """
+        # logs either has "loss" or "eval_loss"
+        train_eval = "train" if "loss" in logs else "eval"
+        # Add averaged stored metrics to logs
+        key_list, metric_list = [], []
+        for key, metrics in self._stored_metrics[train_eval].items():
+            key_list.append(key)
+            metric_list.append(torch.tensor(metrics, dtype=torch.float).to(self.accelerator.device).mean().item())
+
+        del self._stored_metrics[train_eval]
+        if len(metric_list) < 10:  # pad to for all reduce
+            for i in range(10 - len(metric_list)):
+                key_list.append(f"dummy_{i}")
+                metric_list.append(0.0)
+
+        metric_list = torch.tensor(metric_list, dtype=torch.float).to(self.accelerator.device)
+        metric_list = self.accelerator.reduce(metric_list, "mean").tolist()
+        for key, metric in zip(key_list, metric_list):  # add remaining items
+            if not key.startswith("dummy_"):
+                logs[key] = metric
+
+        return Trainer.log(self, logs, *args, **kwargs)
+    
+    @override
+    def _get_train_sampler(self) -> Optional["torch.utils.data.Sampler"]:
+        if self.finetuning_args.disable_shuffling:
+            return torch.utils.data.SequentialSampler(self.train_dataset)
+
+        return super()._get_train_sampler()
+
+    @override
+    def get_batch_samples(self, epoch_iterator, num_batches):
+        r"""
+        Replaces the method of KTO Trainer with the one of the standard Trainer.
+        """
+        return Trainer.get_batch_samples(self, epoch_iterator, num_batches)
+        
