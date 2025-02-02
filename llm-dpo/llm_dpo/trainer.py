@@ -59,8 +59,6 @@ class CustomDPOTrainer(DPOTrainer):
         self._peft_has_been_casted_to_bf16 = False
         self.use_dpo_data_collator = True
         self.reference_free = False
-        self.f_divergence_type = "reverse_kl"
-        self.loss_type = 'sigmoid'
         # dpo hyperparams
         self.beta = finetuning_args.pref_beta
         self.ftx_gamma = finetuning_args.pref_ftx
@@ -97,6 +95,53 @@ class CustomDPOTrainer(DPOTrainer):
 
                 model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
                 print("enable_input_embeddings_require_grads")
+
+    @override
+    def dpo_loss(
+        self,
+        chosen_logps: torch.FloatTensor,
+        rejected_logps: torch.FloatTensor,
+        ref_chosen_logps: torch.FloatTensor,
+        ref_rejected_logps: torch.FloatTensor,
+    ) -> tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
+        """
+        Compute the DPO loss for a batch of policy and reference model log probabilities.
+
+        Args:
+            chosen_logps (`torch.FloatTensor`):
+                Log probabilities of the model for the chosen responses. Shape: `(batch_size,)`.
+            rejected_logps (`torch.FloatTensor`):
+                Log probabilities of the model for the rejected responses. Shape: `(batch_size,)`.
+            ref_chosen_logps (`torch.FloatTensor`):
+                Log probabilities of the reference model for the chosen responses. Shape: `(batch_size,)`.
+            ref_rejected_logps (`torch.FloatTensor`):
+                Log probabilities of the reference model for the rejected responses. Shape: `(batch_size,)`.
+
+        Returns:
+            A tuple of three tensors: `(losses, chosen_rewards, rejected_rewards)`.
+            The losses tensor contains the DPO loss for each example in the batch.
+            The `chosen_rewards` and `rejected_rewards` tensors contain the rewards for the chosen and rejected
+            responses, respectively.
+        """
+        device = self.accelerator.device
+
+
+        logratios = chosen_logps - rejected_logps
+        ref_logratios = ref_chosen_logps - ref_rejected_logps
+
+        logratios = logratios.to(self.accelerator.device)
+        ref_logratios = ref_logratios.to(self.accelerator.device)
+        logits = logratios - ref_logratios
+
+        losses = (
+            -F.logsigmoid(self.beta * logits) * (1 - self.label_smoothing)
+            - F.logsigmoid(-self.beta * logits) * self.label_smoothing
+        )
+
+        chosen_rewards = self.beta * (chosen_logps.to(device) - ref_chosen_logps.to(device)).detach()
+        rejected_rewards = self.beta * (rejected_logps.to(device) - ref_rejected_logps.to(device)).detach()
+
+        return losses, chosen_rewards, rejected_rewards
 
     def simpo_loss(self, chosen_logps: "torch.Tensor", rejected_logps: "torch.Tensor") -> "torch.Tensor":
         """
