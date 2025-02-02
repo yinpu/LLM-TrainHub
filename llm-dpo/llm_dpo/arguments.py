@@ -15,7 +15,7 @@ class DataArguments:
         default=None, metadata={"help": "Path to the training data."}
     )
     cutoff_len: int = field(
-        default=1024, metadata={"help": "The maximum length of the input."}
+        default=512, metadata={"help": "The maximum length of the input."}
     )
     cache_dir: str = field(
         default=None, metadata={"help": "use data cache"}

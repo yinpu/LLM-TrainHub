@@ -7,7 +7,7 @@ torchrun --nnodes 1 \
     --cache_dir cache_data \
     --learning_rate 2e-5 \
     --bf16 True \
-    --num_train_epochs 5 \
+    --num_train_epochs 2 \
     --per_device_train_batch_size 4 \
     --gradient_accumulation_steps 1 \
     --save_strategy epoch \
@@ -43,7 +43,7 @@ torchrun --nnodes 1 \
     --cache_dir cache_data \
     --learning_rate 2e-5 \
     --bf16 True \
-    --num_train_epochs 5 \
+    --num_train_epochs 2 \
     --per_device_train_batch_size 4 \
     --gradient_accumulation_steps 1 \
     --save_strategy epoch \

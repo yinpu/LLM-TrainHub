@@ -66,6 +66,7 @@ class CustomDPOTrainer(DPOTrainer):
 
         self.dpo_type = finetuning_args.dpo_type
         self.simpo_gamma = finetuning_args.simpo_gamma
+        self.disable_shuffling = finetuning_args.disable_shuffling
         print(f"DPO_TYPE: {self.dpo_type}")
 
         Trainer.__init__(self, model=model, **kwargs)
@@ -302,7 +303,7 @@ class CustomDPOTrainer(DPOTrainer):
     
     @override
     def _get_train_sampler(self) -> Optional["torch.utils.data.Sampler"]:
-        if self.finetuning_args.disable_shuffling:
+        if self.disable_shuffling:
             return torch.utils.data.SequentialSampler(self.train_dataset)
 
         return super()._get_train_sampler()
